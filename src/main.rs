@@ -42,8 +42,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(handlers::health))
         .route("/rooms", post(handlers::create_room))
-        .route("/rooms/:room_id", get(handlers::room_info))
-        .route("/rooms/:room_id/ws", get(ws::handler))
+        .route("/rooms/{room_id}", get(handlers::room_info))
+        .route("/rooms/{room_id}/ws", get(ws::handler))
         .layer(CorsLayer::permissive())
         .with_state(registry);
 
