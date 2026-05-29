@@ -39,6 +39,7 @@ pub enum WsMessage {
         exit_code: i32,
         duration_ms: u64,
         diff: Vec<DiffHunk>,
+        timed_out: bool,
     },
     PeerEvent {
         peer_id: String,
@@ -222,63 +223,62 @@ async fn handle_client_message(raw: &str, peer_id: &str, room: &Arc<Room>, is_wi
                 cursor_col,
             });
         }
-       WsMessage::RunRequest { run_id } => {
-    if is_witness { return; }
+        WsMessage::RunRequest { run_id } => {
+            if is_witness {
+                return;
+            }
 
-    let snapshot = {
-        let snap = room.snapshot.lock().await;
-        (snap.content.clone(), snap.language.clone())
-    };
+            let snapshot = {
+                let snap = room.snapshot.lock().await;
+                (snap.content.clone(), snap.language.clone())
+            };
+            let (code, language) = snapshot;
 
-    let (code, language) = snapshot;
+            if code.trim().is_empty() {
+                room.broadcast(WsMessage::Error {
+                    code: "empty_code".into(),
+                    message: "Nothing to run — editor is empty".into(),
+                });
+                return;
+            }
 
-    if code.trim().is_empty() {
-        room.broadcast(WsMessage::Error {
-            code: "empty_code".into(),
-            message: "Nothing to run — editor is empty".into(),
-        });
-        return;
-    }
+            let room_clone = room.clone();
+            let run_id_clone = run_id.clone();
 
-    let room_clone = room.clone();
-    let run_id_clone = run_id.clone();
+            tokio::spawn(async move {
+                let req = crate::executor::ExecutionRequest {
+                    run_id: run_id_clone.clone(),
+                    language,
+                    code,
+                };
 
-    tokio::spawn(async move {
-        let req = crate::executor::ExecutionRequest {
-            run_id: run_id_clone.clone(),
-            language,
-            code,
-        };
+                let result = crate::executor::execute(req).await;
 
-        let result = crate::executor::execute(req).await;
+                for line in result.stdout.lines() {
+                    room_clone.broadcast(WsMessage::OutputLine {
+                        run_id: run_id_clone.clone(),
+                        line: line.to_string(),
+                        stream: OutputStream::Stdout,
+                    });
+                }
 
-        // stream stdout lines back
-        for line in result.stdout.lines() {
-            room_clone.broadcast(WsMessage::OutputLine {
-                run_id: run_id_clone.clone(),
-                line: line.to_string(),
-                stream: OutputStream::Stdout,
+                for line in result.stderr.lines() {
+                    room_clone.broadcast(WsMessage::OutputLine {
+                        run_id: run_id_clone.clone(),
+                        line: line.to_string(),
+                        stream: OutputStream::Stderr,
+                    });
+                }
+
+                room_clone.broadcast(WsMessage::RunResult {
+                    run_id: run_id_clone,
+                    exit_code: result.exit_code.unwrap_or(1),
+                    duration_ms: result.duration_ms,
+                    diff: vec![],
+                    timed_out: result.timed_out,
+                });
             });
         }
-
-        // stream stderr lines back
-        for line in result.stderr.lines() {
-            room_clone.broadcast(WsMessage::OutputLine {
-                run_id: run_id_clone.clone(),
-                line: line.to_string(),
-                stream: OutputStream::Stderr,
-            });
-        }
-
-        // final result
-        room_clone.broadcast(WsMessage::RunResult {
-            run_id: run_id_clone,
-            exit_code: result.exit_code,
-            duration_ms: result.duration_ms,
-            diff: vec![], // Phase 3 — diff engine
-        });
-    });
-}
         WsMessage::WitnessHello => {
             debug!("witness {} acknowledged read-only mode", peer_id);
         }

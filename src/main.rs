@@ -1,7 +1,7 @@
 mod error;
+mod executor;
 mod room;
 mod ws;
-mod executor;
 use std::sync::Arc;
 
 use axum::{
