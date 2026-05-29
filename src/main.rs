@@ -2,6 +2,7 @@ mod error;
 mod executor;
 mod room;
 mod ws;
+mod diff;
 use std::sync::Arc;
 
 use axum::{

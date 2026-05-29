@@ -7,6 +7,7 @@ use axum::{
     },
     response::IntoResponse,
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -230,9 +231,10 @@ async fn handle_client_message(raw: &str, peer_id: &str, room: &Arc<Room>, is_wi
 
             let snapshot = {
                 let snap = room.snapshot.lock().await;
-                (snap.content.clone(), snap.language.clone())
+                (snap.content.clone(), snap.language.clone(), snap.last_output.clone())
             };
-            let (code, language) = snapshot;
+            let (code, language, last_output) = snapshot;
+            let previous_output = last_output.map(|o| o.stdout);
 
             if code.trim().is_empty() {
                 room.broadcast(WsMessage::Error {
@@ -250,6 +252,7 @@ async fn handle_client_message(raw: &str, peer_id: &str, room: &Arc<Room>, is_wi
                     run_id: run_id_clone.clone(),
                     language,
                     code,
+                    previous_output,
                 };
 
                 let result = crate::executor::execute(req).await;
@@ -270,11 +273,22 @@ async fn handle_client_message(raw: &str, peer_id: &str, room: &Arc<Room>, is_wi
                     });
                 }
 
+                {
+                    let mut snap = room_clone.snapshot.lock().await;
+                    snap.last_output = Some(crate::room::RunOutput {
+                        stdout: result.stdout.clone(),
+                        stderr: result.stderr.clone(),
+                        exit_code: result.exit_code.unwrap_or(1),
+                        duration_ms: result.duration_ms,
+                        ran_at: Utc::now(),
+                    });
+                }
+
                 room_clone.broadcast(WsMessage::RunResult {
                     run_id: run_id_clone,
                     exit_code: result.exit_code.unwrap_or(1),
                     duration_ms: result.duration_ms,
-                    diff: vec![],
+                    diff: result.diff,
                     timed_out: result.timed_out,
                 });
             });

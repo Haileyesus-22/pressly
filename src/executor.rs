@@ -15,6 +15,7 @@ pub struct ExecutionRequest {
     pub run_id: String,
     pub language: String,
     pub code: String,
+    pub previous_output: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ pub struct ExecutionResult {
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
     pub timed_out: bool,
+    pub diff: Vec<crate::ws::DiffHunk>,
 }
 
 static EXEC_SEM: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
@@ -82,6 +84,7 @@ pub async fn execute(req: ExecutionRequest) -> ExecutionResult {
                 exit_code: None,
                 duration_ms: 0,
                 timed_out: false,
+                diff: vec![],
             };
         }
     };
@@ -124,6 +127,7 @@ pub async fn execute(req: ExecutionRequest) -> ExecutionResult {
                 exit_code: output.status.code(),
                 duration_ms: elapsed(&start),
                 timed_out: false,
+                diff: vec![],
             };
         }
     }
@@ -180,6 +184,12 @@ pub async fn execute(req: ExecutionRequest) -> ExecutionResult {
 
     let exit_code = status.and_then(|s| s.code());
 
+    let diff = if let Some(prev) = req.previous_output {
+        crate::diff::diff_output(&prev, &stdout)
+    } else {
+        vec![]
+    };
+
     ExecutionResult {
         run_id,
         stdout,
@@ -191,6 +201,7 @@ pub async fn execute(req: ExecutionRequest) -> ExecutionResult {
         exit_code,
         duration_ms: elapsed(&start),
         timed_out,
+        diff,
     }
 }
 
@@ -202,6 +213,7 @@ fn result_err(run_id: &str, msg: &str, duration_ms: u64, timed_out: bool) -> Exe
         exit_code: None,
         duration_ms,
         timed_out,
+        diff: vec![],
     }
 }
 
